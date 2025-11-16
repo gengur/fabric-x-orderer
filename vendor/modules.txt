@@ -49,11 +49,11 @@ github.com/bits-and-blooms/bitset
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/consensys/bavard v0.1.13
-## explicit; go 1.15
+# github.com/consensys/bavard v0.1.22
+## explicit; go 1.22
 github.com/consensys/bavard
-# github.com/consensys/gnark-crypto v0.13.0
-## explicit; go 1.19
+# github.com/consensys/gnark-crypto v0.14.0
+## explicit; go 1.22
 github.com/consensys/gnark-crypto/ecc
 github.com/consensys/gnark-crypto/ecc/bls12-377
 github.com/consensys/gnark-crypto/ecc/bls12-377/fp
@@ -73,9 +73,12 @@ github.com/consensys/gnark-crypto/field/hash
 github.com/consensys/gnark-crypto/field/pool
 github.com/consensys/gnark-crypto/internal/generator/config
 github.com/consensys/gnark-crypto/internal/parallel
-# github.com/davecgh/go-spew v1.1.1
+# github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 ## explicit
 github.com/davecgh/go-spew/spew
+# github.com/felixge/httpsnoop v1.0.4
+## explicit; go 1.13
+github.com/felixge/httpsnoop
 # github.com/fsnotify/fsnotify v1.7.0
 ## explicit; go 1.17
 github.com/fsnotify/fsnotify
@@ -106,6 +109,12 @@ github.com/google/go-cmp/cmp/internal/value
 # github.com/google/pprof v0.0.0-20241001023024-f4c0cfd0cf1d
 ## explicit; go 1.22
 github.com/google/pprof/profile
+# github.com/gorilla/handlers v1.5.2
+## explicit; go 1.20
+github.com/gorilla/handlers
+# github.com/gorilla/mux v1.8.1
+## explicit; go 1.20
+github.com/gorilla/mux
 # github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 ## explicit; go 1.14
 github.com/grpc-ecosystem/go-grpc-middleware
@@ -184,13 +193,14 @@ github.com/hyperledger/fabric-protos-go-apiv2/orderer
 github.com/hyperledger/fabric-protos-go-apiv2/orderer/etcdraft
 github.com/hyperledger/fabric-protos-go-apiv2/orderer/smartbft
 github.com/hyperledger/fabric-protos-go-apiv2/peer
-# github.com/hyperledger/fabric-x-common v0.0.0-20250702121055-42b021047999
+# github.com/hyperledger/fabric-x-common v0.0.0-20250709124952-c15db56a3382
 ## explicit; go 1.24
 github.com/hyperledger/fabric-x-common/common/capabilities
 github.com/hyperledger/fabric-x-common/common/cauthdsl
 github.com/hyperledger/fabric-x-common/common/channelconfig
 github.com/hyperledger/fabric-x-common/common/configtx
 github.com/hyperledger/fabric-x-common/common/genesis
+github.com/hyperledger/fabric-x-common/common/metadata
 github.com/hyperledger/fabric-x-common/common/policies
 github.com/hyperledger/fabric-x-common/common/policydsl
 github.com/hyperledger/fabric-x-common/common/util
@@ -199,7 +209,10 @@ github.com/hyperledger/fabric-x-common/core/config
 github.com/hyperledger/fabric-x-common/internaltools/configtxgen
 github.com/hyperledger/fabric-x-common/internaltools/configtxgen/encoder
 github.com/hyperledger/fabric-x-common/internaltools/configtxgen/genesisconfig
+github.com/hyperledger/fabric-x-common/internaltools/configtxlator/metadata
+github.com/hyperledger/fabric-x-common/internaltools/configtxlator/rest
 github.com/hyperledger/fabric-x-common/internaltools/configtxlator/update
+github.com/hyperledger/fabric-x-common/internaltools/cryptogen/metadata
 github.com/hyperledger/fabric-x-common/internaltools/pkg/identity
 github.com/hyperledger/fabric-x-common/msp
 github.com/hyperledger/fabric-x-common/msp/cache
@@ -276,8 +289,8 @@ github.com/onsi/gomega/matchers/support/goraph/edge
 github.com/onsi/gomega/matchers/support/goraph/node
 github.com/onsi/gomega/matchers/support/goraph/util
 github.com/onsi/gomega/types
-# github.com/pelletier/go-toml/v2 v2.2.2
-## explicit; go 1.16
+# github.com/pelletier/go-toml/v2 v2.2.3
+## explicit; go 1.21.0
 github.com/pelletier/go-toml/v2
 github.com/pelletier/go-toml/v2/internal/characters
 github.com/pelletier/go-toml/v2/internal/danger
@@ -286,7 +299,7 @@ github.com/pelletier/go-toml/v2/unstable
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
-# github.com/pmezard/go-difflib v1.0.0
+# github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 ## explicit
 github.com/pmezard/go-difflib/difflib
 # github.com/prometheus/client_golang v1.23.2
@@ -309,6 +322,8 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
+# github.com/rogpeppe/go-internal v1.13.1
+## explicit; go 1.22
 # github.com/sagikazarmark/locafero v0.6.0
 ## explicit; go 1.20
 github.com/sagikazarmark/locafero

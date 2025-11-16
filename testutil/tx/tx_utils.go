@@ -40,7 +40,7 @@ func createPayloadHeader(ch *common.ChannelHeader, sh *common.SignatureHeader) *
 }
 
 func createStructuredPayload(data []byte, requestType common.HeaderType) *common.Payload {
-	payloadChannelHeader := createChannelHeader(requestType, 0, "channelID", 0)
+	payloadChannelHeader := createChannelHeader(requestType, 0, "arma", 0)
 	payloadSignatureHeader := &common.SignatureHeader{
 		Creator: []byte("creator"),
 		Nonce:   []byte("nonce"),

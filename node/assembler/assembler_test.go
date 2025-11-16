@@ -17,7 +17,6 @@ import (
 	"github.com/hyperledger/fabric-x-orderer/node/assembler"
 	assembler_mocks "github.com/hyperledger/fabric-x-orderer/node/assembler/mocks"
 	"github.com/hyperledger/fabric-x-orderer/node/config"
-	"github.com/hyperledger/fabric-x-orderer/node/consensus/state"
 	"github.com/hyperledger/fabric-x-orderer/node/delivery"
 	delivery_mocks "github.com/hyperledger/fabric-x-orderer/node/delivery/mocks"
 	node_ledger "github.com/hyperledger/fabric-x-orderer/node/ledger"
