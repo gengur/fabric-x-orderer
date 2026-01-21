@@ -427,7 +427,7 @@ func WaitSoftStopped(t *testing.T, netInfo map[NodeName]*ArmaNodeInfo) {
 				case <-n.RunInfo.Session.Err.Detect("Soft stop"):
 				case <-n.RunInfo.Session.Err.Detect("soft stop"):
 				case <-time.After(45 * time.Second):
-					require.Fail(t, fmt.Sprintf("Timed out waiting for Arma node %s to stop", n.NodeType))
+					require.Fail(t, fmt.Sprintf("Timed out waiting for Arma node %s party %d to stop", n.NodeType, n.PartyId))
 				}
 			})
 		}

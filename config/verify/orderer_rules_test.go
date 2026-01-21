@@ -288,7 +288,7 @@ func TestValidateTransition_FailedAddTwoParties(t *testing.T) {
 	defer cleanup()
 
 	// add 2 parties
-	builder.AddNewParty(t, &protos.PartyConfig{
+	builder.AddNewParty(t, &configutil.PartyConfig{PartyConfig: protos.PartyConfig{
 		CACerts:    [][]byte{[]byte("newCACert-1")},
 		TLSCACerts: [][]byte{[]byte("newTLSCACert-1")},
 		ConsenterConfig: &protos.ConsenterNodeConfig{
@@ -303,9 +303,9 @@ func TestValidateTransition_FailedAddTwoParties(t *testing.T) {
 		BatchersConfig: []*protos.BatcherNodeConfig{
 			{ShardID: 1, Host: "localhost", Port: 10050, TlsCert: []byte("batcherNewCert-1")},
 		},
-	})
+	}})
 
-	builder.AddNewParty(t, &protos.PartyConfig{
+	builder.AddNewParty(t, &configutil.PartyConfig{PartyConfig: protos.PartyConfig{
 		CACerts:    [][]byte{[]byte("newCACert-2")},
 		TLSCACerts: [][]byte{[]byte("newTLSCACert-2")},
 		ConsenterConfig: &protos.ConsenterNodeConfig{
@@ -320,7 +320,7 @@ func TestValidateTransition_FailedAddTwoParties(t *testing.T) {
 		BatchersConfig: []*protos.BatcherNodeConfig{
 			{ShardID: 1, Host: "localhost", Port: 10051, TlsCert: []byte("batcherNewCert-2")},
 		},
-	})
+	}})
 
 	updatePb := builder.ConfigUpdatePBData(t)
 	require.NotEmpty(t, updatePb)

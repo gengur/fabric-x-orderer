@@ -53,7 +53,7 @@ func TestCreateConfigUpdateBlock(t *testing.T) {
 	configUpdateBuilder.UpdateBatchTimeouts(t, cfgutil.NewBatchTimeoutsConfig(cfgutil.BatchTimeoutsConfigName.AutoRemoveTimeout, "10ms"))
 	configUpdateBuilder.UpdateSmartBFTConfig(t, cfgutil.NewSmartBFTConfig(cfgutil.SmartBFTConfigName.RequestMaxBytes, "1048576"))
 	configUpdateBuilder.RemoveParty(t, types.PartyID(2))
-	configUpdateBuilder.AddNewParty(t, &protos.PartyConfig{
+	configUpdateBuilder.AddNewParty(t, &cfgutil.PartyConfig{PartyConfig: protos.PartyConfig{
 		CACerts:    newCACerts,
 		TLSCACerts: newTLSCACerts,
 		ConsenterConfig: &protos.ConsenterNodeConfig{
@@ -79,6 +79,8 @@ func TestCreateConfigUpdateBlock(t *testing.T) {
 				TlsCert: []byte("batcherNewCert"),
 			},
 		},
+	},
+		AdminCerts: [][]byte{[]byte("adminNewCert")},
 	})
 
 	configUpdateBuilder.UpdateBatcherSignCert(t, types.PartyID(1), types.ShardID(1), []byte("newSignCert"))

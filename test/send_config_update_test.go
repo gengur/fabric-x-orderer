@@ -12,7 +12,9 @@ import (
 	"maps"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -21,14 +23,22 @@ import (
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-common/tools/configtxgen"
+	"github.com/hyperledger/fabric-x-orderer/common/msputils"
+	"github.com/hyperledger/fabric-x-orderer/common/policy"
 	"github.com/hyperledger/fabric-x-orderer/common/tools/armageddon"
 	"github.com/hyperledger/fabric-x-orderer/common/types"
 	"github.com/hyperledger/fabric-x-orderer/common/utils"
 	"github.com/hyperledger/fabric-x-orderer/config"
 	"github.com/hyperledger/fabric-x-orderer/config/generate"
 	"github.com/hyperledger/fabric-x-orderer/config/protos"
+	"github.com/hyperledger/fabric-x-orderer/config/verify"
+	"github.com/hyperledger/fabric-x-orderer/node/assembler"
+	nodeconfig "github.com/hyperledger/fabric-x-orderer/node/config"
+	"github.com/hyperledger/fabric-x-orderer/node/router"
+	node_utils "github.com/hyperledger/fabric-x-orderer/node/utils"
 	"github.com/hyperledger/fabric-x-orderer/testutil"
 	"github.com/hyperledger/fabric-x-orderer/testutil/client"
 	"github.com/hyperledger/fabric-x-orderer/testutil/configutil"
@@ -59,7 +69,6 @@ func TestUpdatePartyRouterEndpoint(t *testing.T) {
 
 	netInfo := testutil.CreateNetwork(t, configPath, numOfParties, 2, "none", "none")
 	require.NotNil(t, netInfo)
-	require.NoError(t, err)
 
 	armageddon.NewCLI().Run([]string{"generate", "--config", configPath, "--output", dir})
 
@@ -415,7 +424,7 @@ func TestRemoveStoppedPartyThenRestart(t *testing.T) {
 
 	partyToRemove := types.PartyID(4)
 	// Stop the party to be removed
-	armaNetwork.StopParties([]types.PartyID{partyToRemove})
+	armaNetwork.StopParties(t, []types.PartyID{partyToRemove})
 
 	// Update user config to remove the party
 	uc.RouterEndpoints = append(uc.RouterEndpoints[:partyToRemove-1], uc.RouterEndpoints[partyToRemove:]...)
@@ -1501,6 +1510,277 @@ func TestChangePartyCACertificates(t *testing.T) {
 	broadcastClient.Stop()
 }
 
+func TestAddRemoveAllPartiesReplaced(t *testing.T) {
+	// Prepare Arma config and crypto and get the genesis block
+	dir, err := os.MkdirTemp("", t.Name())
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	configPath := filepath.Join(dir, "config.yaml")
+	numOfParties := 4
+	numOfShards := 1
+	submittingPartyID := types.PartyID(2)
+
+	netInfo := testutil.CreateNetwork(t, configPath, numOfParties, numOfShards, "mTLS", "mTLS")
+	require.NotNil(t, netInfo)
+	require.NoError(t, err)
+
+	armageddon.NewCLI().Run([]string{"generate", "--config", configPath, "--output", dir})
+
+	configFilePath := filepath.Join(dir, fmt.Sprintf("config/party%d/local_config_router.yaml", types.PartyID(submittingPartyID)))
+	conf, _, err := config.LoadLocalConfig(configFilePath)
+	require.NoError(t, err)
+
+	// Modify the router configuration to require client signature verification.
+	conf.NodeLocalConfig.GeneralConfig.ClientSignatureVerificationRequired = true
+	utils.WriteToYAML(conf.NodeLocalConfig, configFilePath)
+
+	armaBinaryPath, err := gexec.BuildWithEnvironment("github.com/hyperledger/fabric-x-orderer/cmd/arma", []string{"GOPRIVATE=" + os.Getenv("GOPRIVATE")})
+	defer gexec.CleanupBuildArtifacts()
+	require.NoError(t, err)
+	require.NotNil(t, armaBinaryPath)
+
+	// Start Arma nodes
+	numOfArmaNodes := len(netInfo)
+	readyChan := make(chan string, numOfArmaNodes)
+	armaNetwork := testutil.RunArmaNodes(t, dir, armaBinaryPath, readyChan, netInfo)
+
+	testutil.WaitReady(t, readyChan, numOfArmaNodes, 10)
+
+	parties := make([]types.PartyID, 0, numOfParties)
+	for i := 1; i <= numOfParties; i++ {
+		parties = append(parties, types.PartyID(i))
+	}
+
+	uc, err := testutil.GetUserConfig(dir, submittingPartyID)
+	require.NoError(t, err)
+
+	txNumber := 10
+	totalTxNumber := 0
+	// Send transactions to all parties to ensure network is operational before config update
+	signer, certBytes, err := testutil.LoadCryptoMaterialsFromDir(t, uc.MSPDir)
+	require.NoError(t, err)
+	broadcastClient := client.NewBroadcastTxClient(uc, 10*time.Second)
+	submittingOrg := fmt.Sprintf("org%d", submittingPartyID)
+
+	for range txNumber {
+		txContent := tx.PrepareTxWithTimestamp(totalTxNumber, 64, []byte("sessionNumber"))
+		env := tx.CreateSignedStructuredEnvelope(txContent, signer, certBytes, submittingOrg)
+		err = broadcastClient.SendTx(env)
+		require.NoError(t, err)
+		totalTxNumber++
+	}
+	pullRequestSigner := signutil.CreateTestSigner(t, submittingOrg, dir)
+	statusUnknown := common.Status_UNKNOWN
+	// Pull blocks to verify all transactions are included
+	PullFromAssemblers(t, &BlockPullerOptions{
+		UserConfig:   uc,
+		Parties:      parties,
+		Transactions: totalTxNumber,
+		ErrString:    "cancelled pull from assembler: %d; pull ended: failed to receive a deliver response: rpc error: code = Canceled desc = grpc: the client connection is closing",
+		Timeout:      60,
+		Status:       &statusUnknown,
+		Signer:       pullRequestSigner,
+	})
+
+	broadcastClient.Stop()
+
+	configBlockPath := filepath.Join(dir, "bootstrap", "bootstrap.block")
+
+	configBlockStoreDir := t.TempDir()
+	defer os.RemoveAll(configBlockStoreDir)
+
+	routerEndpoints := uc.RouterEndpoints
+	assemblerEndpoints := uc.AssemblerEndpoints
+
+	var nodeStopper node_utils.NodeStopper
+
+	for i := 1; i <= numOfParties; i++ {
+		configUpdateBuilder, _ := configutil.NewConfigUpdateBuilder(t, dir, configBlockPath)
+		configUpdateBuilder.RemoveParty(t, types.PartyID(i))
+
+		// Submit config update
+		submittingPartyID = types.PartyID(types.PartyID(i))
+
+		uc, err := testutil.GetUserConfig(dir, submittingPartyID)
+		require.NoError(t, err)
+
+		broadcastClient := client.NewBroadcastTxClient(uc, 10*time.Second)
+
+		// Send the config tx
+		env := configutil.CreateConfigTX(t, dir, parties, int(submittingPartyID), configUpdateBuilder.ConfigUpdatePBData(t))
+		require.NotNil(t, env)
+
+		err = broadcastClient.SendTxTo(env, submittingPartyID)
+		require.NoError(t, err)
+
+		// Wait for Arma nodes to stop
+		testutil.WaitSoftStopped(t, netInfo)
+
+		broadcastClient.Stop()
+		// Stop Arma nodes
+		armaNetwork.Stop()
+		if nodeStopper != nil {
+			nodeStopper.Stop()
+			nodeStopper = nil
+		}
+
+		maps.DeleteFunc(netInfo, func(nodeName testutil.NodeName, _ *testutil.ArmaNodeInfo) bool {
+			return nodeName.PartyID == types.PartyID(i)
+		})
+
+		parties = slices.DeleteFunc(parties, func(partyID types.PartyID) bool {
+			return partyID == types.PartyID(i)
+		})
+
+		sharedConfig := config.SharedConfigYaml{}
+		err = utils.ReadFromYAML(&sharedConfig, filepath.Join(dir, "bootstrap", "shared_config.yaml"))
+		require.NoError(t, err, "failed to load shared config")
+
+		sharedConfig.PartiesConfig = slices.DeleteFunc(sharedConfig.PartiesConfig, func(partyConfig config.PartyConfig) bool {
+			return uint32(partyConfig.PartyID) == uint32(i)
+		})
+
+		err = utils.WriteToYAML(sharedConfig, filepath.Join(dir, "bootstrap", "shared_config.yaml"))
+		require.NoError(t, err, "failed to write updated shared config")
+
+		err = os.RemoveAll(filepath.Join(dir, "crypto", "ordererOrganizations", fmt.Sprintf("org%d", i)))
+		require.NoError(t, err)
+
+		submittingPartyID = parties[0]
+		configBlockPath = filepath.Join(configBlockStoreDir, fmt.Sprintf("config_%d.block", submittingPartyID))
+		_, lastConfigBlock, err := config.ReadConfig(filepath.Join(dir, "config", fmt.Sprintf("party%d", submittingPartyID), "local_config_assembler.yaml"), flogging.MustGetLogger("TestAddNewParty"))
+		require.NoError(t, err)
+		err = configtxgen.WriteOutputBlock(lastConfigBlock, configBlockPath)
+		require.NoError(t, err)
+
+		numOfArmaNodes = len(netInfo)
+		readyChan = make(chan string, numOfArmaNodes)
+		armaNetwork = testutil.RunArmaNodes(t, dir, armaBinaryPath, readyChan, netInfo)
+		testutil.WaitReady(t, readyChan, numOfArmaNodes, 10)
+
+		configUpdateBuilder, _ = configutil.NewConfigUpdateBuilder(t, dir, configBlockPath)
+		addedPartyId, addedNetInfo := prepareAddPartyConfigUpdate(t, dir, configUpdateBuilder)
+
+		uc, err = testutil.GetUserConfig(dir, submittingPartyID)
+		require.NoError(t, err)
+
+		broadcastClient = client.NewBroadcastTxClient(uc, 10*time.Second)
+
+		// Send the config tx
+		env = configutil.CreateConfigTX(t, dir, parties, int(submittingPartyID), configUpdateBuilder.ConfigUpdatePBData(t))
+		require.NotNil(t, env)
+
+		err = broadcastClient.SendTxTo(env, submittingPartyID)
+		require.NoError(t, err)
+
+		// Wait for Arma nodes to stop
+		testutil.WaitSoftStopped(t, netInfo)
+
+		broadcastClient.Stop()
+		// Stop Arma nodes
+		armaNetwork.Stop()
+
+		configBlockPath = filepath.Join(configBlockStoreDir, fmt.Sprintf("config_%d.block", submittingPartyID))
+		_, lastConfigBlock, err = config.ReadConfig(filepath.Join(dir, "config", fmt.Sprintf("party%d", submittingPartyID), "local_config_assembler.yaml"), flogging.MustGetLogger("TestAddNewParty"))
+		require.NoError(t, err)
+		err = configtxgen.WriteOutputBlock(lastConfigBlock, configBlockPath)
+		require.NoError(t, err)
+
+		for _, netNode := range addedNetInfo {
+			netNode.ConfigBlockPath = configBlockPath
+		}
+
+		maps.Copy(netInfo, addedNetInfo)
+
+		numOfArmaNodes = len(netInfo)
+
+		netInfo[testutil.NodeName{PartyID: addedPartyId, NodeType: testutil.Assembler}].Listener.Close()
+		delete(netInfo, testutil.NodeName{PartyID: addedPartyId, NodeType: testutil.Assembler})
+		numOfArmaNodes--
+
+		readyChan = make(chan string, numOfArmaNodes)
+		armaNetwork = testutil.RunArmaNodes(t, dir, armaBinaryPath, readyChan, netInfo)
+		testutil.WaitReady(t, readyChan, numOfArmaNodes, 10)
+
+		nodeStopper = assemblerLauncher(t, dir, filepath.Join(dir, "config", fmt.Sprintf("party%d", addedPartyId), "local_config_assembler.yaml"), configBlockPath, addedPartyId)
+
+		routerEndpoints = append(routerEndpoints, addedNetInfo[testutil.NodeName{PartyID: addedPartyId, NodeType: testutil.Router}].Listener.Addr().String())
+		assemblerEndpoints = append(assemblerEndpoints, addedNetInfo[testutil.NodeName{PartyID: addedPartyId, NodeType: testutil.Assembler}].Listener.Addr().String())
+
+		addedPartyUserConfig, err := testutil.GetUserConfig(dir, addedPartyId)
+		require.NoError(t, err)
+
+		parties = append(parties, addedPartyId)
+
+		for _, partyID := range parties {
+			uc, err := testutil.GetUserConfig(dir, partyID)
+			require.NoError(t, err)
+
+			uc.RouterEndpoints = routerEndpoints
+			uc.AssemblerEndpoints = assemblerEndpoints
+			uc.TLSCACerts = addedPartyUserConfig.TLSCACerts
+
+			err = utils.WriteToYAML(uc, filepath.Join(dir, "config", fmt.Sprintf("party%d", partyID), "user_config.yaml"))
+			require.NoError(t, err)
+		}
+	}
+
+	clear(routerEndpoints)
+	clear(assemblerEndpoints)
+
+	for _, pID := range parties {
+		routerEndpoints = append(routerEndpoints, netInfo[testutil.NodeName{PartyID: pID, NodeType: testutil.Router}].Listener.Addr().String())
+		assemblerEndpoints = append(assemblerEndpoints, netInfo[testutil.NodeName{PartyID: pID, NodeType: testutil.Assembler}].Listener.Addr().String())
+	}
+
+	uc.RouterEndpoints = routerEndpoints
+	uc.AssemblerEndpoints = assemblerEndpoints
+
+	for _, partyID := range parties {
+		uc, err := testutil.GetUserConfig(dir, partyID)
+		require.NoError(t, err)
+
+		uc.RouterEndpoints = routerEndpoints
+		uc.AssemblerEndpoints = assemblerEndpoints
+
+		err = utils.WriteToYAML(uc, filepath.Join(dir, "config", fmt.Sprintf("party%d", partyID), "user_config.yaml"))
+		require.NoError(t, err)
+	}
+
+	// Send transactions to all parties to ensure network is operational before config update
+	submittingPartyID = parties[0]
+	uc, err = testutil.GetUserConfig(dir, submittingPartyID)
+	require.NoError(t, err)
+
+	signer, certBytes, err = testutil.LoadCryptoMaterialsFromDir(t, uc.MSPDir)
+	require.NoError(t, err)
+	broadcastClient = client.NewBroadcastTxClient(uc, 10*time.Second)
+	submittingOrg = fmt.Sprintf("org%d", submittingPartyID)
+
+	for range txNumber {
+		txContent := tx.PrepareTxWithTimestamp(totalTxNumber, 64, []byte("sessionNumber"))
+		env := tx.CreateSignedStructuredEnvelope(txContent, signer, certBytes, submittingOrg)
+		err = broadcastClient.SendTx(env)
+		require.NoError(t, err)
+		totalTxNumber++
+	}
+
+	broadcastClient.Stop()
+
+	pullRequestSigner = signutil.CreateTestSigner(t, submittingOrg, dir)
+	// Pull blocks to verify all transactions are included
+	PullFromAssemblers(t, &BlockPullerOptions{
+		UserConfig:   uc,
+		Parties:      parties,
+		Transactions: totalTxNumber,
+		ErrString:    "cancelled pull from assembler: %d; pull ended: failed to receive a deliver response: rpc error: code = Canceled desc = grpc: the client connection is closing",
+		Timeout:      60,
+		Status:       &statusUnknown,
+		Signer:       pullRequestSigner,
+	})
+}
+
 type copyPredicate func(path string, d os.DirEntry) bool
 
 func copyNonCAFilesPredicate(path string, d os.DirEntry) bool {
@@ -1968,8 +2248,10 @@ func prepareAddPartyConfigUpdate(t *testing.T, dir string, configUpdateBuilder *
 	require.NoError(t, err)
 	consenterSignCert, err := os.ReadFile(filepath.Join(consenterConfig.NodeLocalConfig.GeneralConfig.LocalMSPDir, "signcerts", "sign-cert.pem"))
 	require.NoError(t, err)
+	adminCert, err := os.ReadFile(filepath.Join(dir, "crypto", "ordererOrganizations", addedOrg, "msp", "admincerts", fmt.Sprintf("Admin@Org%d-cert.pem", addedPartyId)))
+	require.NoError(t, err)
 
-	configUpdateBuilder.AddNewParty(t, &protos.PartyConfig{
+	configUpdateBuilder.AddNewParty(t, &configutil.PartyConfig{PartyConfig: protos.PartyConfig{
 		CACerts:    [][]byte{caCerts},
 		TLSCACerts: [][]byte{tlsCACerts},
 		ConsenterConfig: &protos.ConsenterNodeConfig{
@@ -1989,6 +2271,8 @@ func prepareAddPartyConfigUpdate(t *testing.T, dir string, configUpdateBuilder *
 			TlsCert: assemblerTlsCert,
 		},
 		BatchersConfig: batchersConfig,
+	},
+		AdminCerts: [][]byte{adminCert},
 	})
 
 	return addedPartyId, addedNetInfo
@@ -2140,4 +2424,69 @@ func (vm *verifyMaxMessageCount) HandleBlock(t *testing.T, block *common.Block) 
 	}
 
 	return nil
+}
+
+func assemblerLauncher(t *testing.T, dir string, configFile string, configBlockPath string, partyID types.PartyID) node_utils.NodeStopper {
+	storagePath := path.Join(dir, "storage", fmt.Sprintf("party%d", partyID), testutil.Assembler.String())
+	err := os.MkdirAll(storagePath, 0o755)
+	require.NoError(t, err)
+	nodeConfig := testutil.ReadNodeConfigFromYaml(t, configFile)
+	nodeConfig.FileStore.Path = storagePath
+	nodeConfig.GeneralConfig.Bootstrap.File = configBlockPath
+	err = nodeconfig.NodeConfigToYAML(nodeConfig, configFile)
+	require.NoError(t, err)
+
+	configContent, lastConfigBlock, err := config.ReadConfig(configFile, flogging.MustGetLogger("ReadConfigAssembler"))
+	if err != nil {
+		panic(fmt.Sprintf("error launching assembler, err: %s", err))
+	}
+
+	conf := configContent.ExtractAssemblerConfig(lastConfigBlock)
+
+	if err := configContent.CheckIfAssemblerNodeExistsInSharedConfig(); err != nil {
+		panic(err)
+	}
+
+	assemblerLogger := flogging.MustGetLogger(fmt.Sprintf("Assembler%d", conf.PartyId))
+
+	srv := node_utils.CreateGRPCAssembler(conf)
+	assembler := assembler.NewAssembler(conf, srv, lastConfigBlock, assemblerLogger)
+
+	orderer.RegisterAtomicBroadcastServer(srv.Server(), assembler)
+
+	go func() {
+		_ = srv.Start()
+	}()
+
+	// TODO: move StopSignalListen to Assembler Run and pass stopChan
+	node_utils.StopSignalListen(nil, assembler, assemblerLogger, srv.Address())
+
+	assemblerLogger.Infof("Assembler listening on %s", srv.Address())
+
+	return assembler
+}
+
+func routerInst(configFileName string, stop chan struct{}) {
+	conf, lastConfigBlock, err := config.ReadConfig(configFileName, flogging.MustGetLogger("ReadConfigRouter"))
+	if err != nil {
+		panic(fmt.Sprintf("error launching router, err: %s", err))
+	}
+
+	routerConf := conf.ExtractRouterConfig(lastConfigBlock)
+
+	localmsp := msputils.BuildLocalMSP(conf.LocalConfig.NodeLocalConfig.GeneralConfig.LocalMSPDir, conf.LocalConfig.NodeLocalConfig.GeneralConfig.LocalMSPID, conf.LocalConfig.NodeLocalConfig.GeneralConfig.BCCSP)
+	signer, err := localmsp.GetDefaultSigningIdentity()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get local MSP identity: %s", err))
+	}
+
+	if err := conf.CheckIfRouterNodeExistsInSharedConfig(); err != nil {
+		panic(err)
+	}
+
+	routerLogger := flogging.MustGetLogger(fmt.Sprintf("Router%d", routerConf.PartyID))
+	r := router.NewRouter(routerConf, conf, routerLogger, signer, stop, &policy.DefaultConfigUpdateProposer{}, &verify.DefaultOrdererRules{})
+	r.StartRouterService()
+
+	routerLogger.Infof("Router listening on %s, PartyID: %d", r.Address(), routerConf.PartyID)
 }

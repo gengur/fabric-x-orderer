@@ -716,7 +716,12 @@ func (c *ConfigUpdateBuilder) UpdateOrgEndpoints(t *testing.T, partyID types.Par
 	return c.createConfigUpdate(t, c.configData)
 }
 
-func (c *ConfigUpdateBuilder) AddNewParty(t *testing.T, newParty *protos.PartyConfig) []byte {
+type PartyConfig struct {
+	protos.PartyConfig
+	AdminCerts [][]byte
+}
+
+func (c *ConfigUpdateBuilder) AddNewParty(t *testing.T, newParty *PartyConfig) []byte {
 	sharedConfig := getNestedJSONValue(t, c.configData, sharedConfigPath...)
 	maxPartyID := sharedConfig.(map[string]any)["MaxPartyID"].(float64)
 	partiesConfig := sharedConfig.(map[string]any)["PartiesConfig"].([]any)
@@ -800,6 +805,14 @@ func (c *ConfigUpdateBuilder) AddNewParty(t *testing.T, newParty *protos.PartyCo
 		fmt.Sprintf("id=%d,deliver,%s:%d", int(maxPartyID), newParty.AssemblerConfig.Host, newParty.AssemblerConfig.Port),
 	}
 	orgName := fmt.Sprintf("org%d", uint32(maxPartyID))
+	overwriteNestedJSONValue(t, newOrg, orgName, "values", "MSP", "value", "config", "name")
+	overwriteNestedJSONValue(t, newOrg, orgName, "policies", "Admins", "policy", "value", "identities", "principal", "msp_identifier")
+	overwriteNestedJSONValue(t, newOrg, orgName, "policies", "Endorsement", "policy", "value", "identities", "principal", "msp_identifier")
+	overwriteNestedJSONValue(t, newOrg, orgName, "policies", "Readers", "policy", "value", "identities", "principal", "msp_identifier")
+	overwriteNestedJSONValue(t, newOrg, orgName, "policies", "Writers", "policy", "value", "identities", "principal", "msp_identifier")
+	overwriteNestedJSONValue(t, newOrg, newParty.CACerts, "values", "MSP", "value", "config", "root_certs")
+	overwriteNestedJSONValue(t, newOrg, newParty.TLSCACerts, "values", "MSP", "value", "config", "tls_root_certs")
+	overwriteNestedJSONValue(t, newOrg, newParty.AdminCerts, "values", "MSP", "value", "config", "admins")
 	orgs[orgName] = newOrg
 
 	overwriteNestedJSONValue(t, c.configData, sharedConfig, sharedConfigPath...)

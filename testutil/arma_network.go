@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -81,11 +82,15 @@ func (armaNetwork *ArmaNetwork) Restart(t *testing.T, readyChan chan string) {
 	}
 }
 
-func (armaNetwork *ArmaNetwork) StopParties(parties []types.PartyID) {
+func (armaNetwork *ArmaNetwork) StopParties(t *testing.T, parties []types.PartyID) {
 	for _, k := range []NodeType{Assembler, Consensus, Batcher, Router} {
 		for _, partyID := range parties {
-			for j := range armaNetwork.armaNodes[k][partyID-1] {
-				armaNetwork.armaNodes[k][partyID-1][j].StopArmaNode()
+			partyIdx := slices.IndexFunc(armaNetwork.armaNodes[k], func(nodes []*ArmaNodeInfo) bool {
+				return nodes[0].PartyId == partyID
+			})
+			require.True(t, partyIdx >= 0, fmt.Sprintf("%s for party %d not found", k, partyID))
+			for j := range armaNetwork.armaNodes[k][partyIdx] {
+				armaNetwork.armaNodes[k][partyIdx][j].StopArmaNode()
 			}
 		}
 	}
@@ -94,8 +99,12 @@ func (armaNetwork *ArmaNetwork) StopParties(parties []types.PartyID) {
 func (armaNetwork *ArmaNetwork) RestartParties(t *testing.T, parties []types.PartyID, readyChan chan string) {
 	for _, k := range []NodeType{Assembler, Consensus, Batcher, Router} {
 		for _, partyID := range parties {
-			for j := range armaNetwork.armaNodes[k][partyID-1] {
-				armaNetwork.armaNodes[k][partyID-1][j].RestartArmaNode(t, readyChan)
+			partyIdx := slices.IndexFunc(armaNetwork.armaNodes[k], func(nodes []*ArmaNodeInfo) bool {
+				return nodes[0].PartyId == partyID
+			})
+			require.True(t, partyIdx >= 0, fmt.Sprintf("%s for party %d not found", k, partyID))
+			for j := range armaNetwork.armaNodes[k][partyIdx] {
+				armaNetwork.armaNodes[k][partyIdx][j].RestartArmaNode(t, readyChan)
 			}
 		}
 	}
@@ -103,28 +112,40 @@ func (armaNetwork *ArmaNetwork) RestartParties(t *testing.T, parties []types.Par
 
 func (armaNetwork *ArmaNetwork) GetAssembler(t *testing.T, partyID types.PartyID) *ArmaNodeInfo {
 	require.True(t, int(partyID) > 0)
-	require.True(t, len(armaNetwork.armaNodes[Assembler]) >= int(partyID))
-	return armaNetwork.armaNodes[Assembler][partyID-1][0]
+	partyIdx := slices.IndexFunc(armaNetwork.armaNodes[Assembler], func(nodes []*ArmaNodeInfo) bool {
+		return nodes[0].PartyId == partyID
+	})
+	require.True(t, partyIdx >= 0, fmt.Sprintf("assembler for party %d not found", partyID))
+	return armaNetwork.armaNodes[Assembler][partyIdx][0]
 }
 
 func (armaNetwork *ArmaNetwork) GetRouter(t *testing.T, partyID types.PartyID) *ArmaNodeInfo {
 	require.True(t, int(partyID) > 0)
-	require.True(t, len(armaNetwork.armaNodes[Router]) >= int(partyID))
-	return armaNetwork.armaNodes[Router][partyID-1][0]
+	partyIdx := slices.IndexFunc(armaNetwork.armaNodes[Router], func(nodes []*ArmaNodeInfo) bool {
+		return nodes[0].PartyId == partyID
+	})
+	require.True(t, partyIdx >= 0, fmt.Sprintf("router for party %d not found", partyID))
+	return armaNetwork.armaNodes[Router][partyIdx][0]
 }
 
 func (armaNetwork *ArmaNetwork) GetConsenter(t *testing.T, partyID types.PartyID) *ArmaNodeInfo {
 	require.True(t, int(partyID) > 0)
-	require.True(t, len(armaNetwork.armaNodes[Consensus]) >= int(partyID))
-	return armaNetwork.armaNodes[Consensus][partyID-1][0]
+	partyIdx := slices.IndexFunc(armaNetwork.armaNodes[Consensus], func(nodes []*ArmaNodeInfo) bool {
+		return nodes[0].PartyId == partyID
+	})
+	require.True(t, partyIdx >= 0, fmt.Sprintf("consenter for party %d not found", partyID))
+	return armaNetwork.armaNodes[Consensus][partyIdx][0]
 }
 
 func (armaNetwork *ArmaNetwork) GetBatcher(t *testing.T, partyID types.PartyID, shardID types.ShardID) *ArmaNodeInfo {
 	require.True(t, int(partyID) > 0)
 	require.True(t, int(shardID) > 0)
-	require.True(t, len(armaNetwork.armaNodes[Batcher]) >= int(partyID))
-	require.True(t, len(armaNetwork.armaNodes[Batcher][partyID-1]) >= int(shardID))
-	return armaNetwork.armaNodes[Batcher][partyID-1][shardID-1]
+	partyIdx := slices.IndexFunc(armaNetwork.armaNodes[Batcher], func(nodes []*ArmaNodeInfo) bool {
+		return nodes[0].PartyId == partyID
+	})
+	require.True(t, partyIdx >= 0, fmt.Sprintf("batcher for party %d not found", partyID))
+	require.True(t, len(armaNetwork.armaNodes[Batcher][partyIdx]) >= int(shardID))
+	return armaNetwork.armaNodes[Batcher][partyIdx][shardID-1]
 }
 
 func (armaNodeInfo *ArmaNodeInfo) RestartArmaNode(t *testing.T, readyChan chan string) {
